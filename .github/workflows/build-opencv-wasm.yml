@@ -1,48 +1,13 @@
 name: Build OpenCV WASM
 
 on:
-  workflow_dispatch:
-    inputs:
-      opencv_version:
-        description: 'OpenCV version to build (e.g., 4.8.1)'
-        required: true
-        default: '4.8.1'
-        type: string
-  schedule:
-    # Check for new OpenCV releases weekly
-    - cron: '0 0 * * 0'
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
-  check-version:
-    runs-on: ubuntu-latest
-    outputs:
-      should_build: ${{ steps.check.outputs.should_build }}
-      opencv_version: ${{ steps.check.outputs.opencv_version }}
-    steps:
-      - name: Check for new OpenCV version
-        id: check
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "should_build=true" >> $GITHUB_OUTPUT
-            echo "opencv_version=${{ github.event.inputs.opencv_version }}" >> $GITHUB_OUTPUT
-          else
-            # Get latest OpenCV release
-            LATEST_VERSION=$(curl -s https://api.github.com/repos/opencv/opencv/releases/latest | jq -r .tag_name)
-            
-            # Check if we already have a release for this version
-            if gh release view "opencv-$LATEST_VERSION" --repo ${{ github.repository }} >/dev/null 2>&1; then
-              echo "should_build=false" >> $GITHUB_OUTPUT
-            else
-              echo "should_build=true" >> $GITHUB_OUTPUT
-              echo "opencv_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
-            fi
-          fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   build:
-    needs: check-version
-    if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     
     steps:
@@ -70,24 +35,30 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential
+          sudo apt-get install -y cmake build-essential jq
+
+      - name: Get OpenCV latest version
+        id: opencv_version
+        run: |
+          VERSION=$(curl -s https://api.github.com/repos/opencv/opencv/releases/latest | jq -r .tag_name)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Using OpenCV version: $VERSION"
 
       - name: Clone OpenCV
         run: |
-          git clone --depth 1 --branch ${{ needs.check-version.outputs.opencv_version }} https://github.com/opencv/opencv.git
-          git clone --depth 1 --branch ${{ needs.check-version.outputs.opencv_version }} https://github.com/opencv/opencv_contrib.git
+          git clone --depth 1 --branch ${{ steps.opencv_version.outputs.version }} https://github.com/opencv/opencv.git
+          git clone --depth 1 --branch ${{ steps.opencv_version.outputs.version }} https://github.com/opencv/opencv_contrib.git
 
       - name: Build OpenCV WASM
         run: |
           source /tmp/emsdk/emsdk_env.sh
+          export EMSCRIPTEN=/tmp/emsdk/upstream/emscripten
           
           cd opencv
-          mkdir build
-          cd build
           
-          python ../platforms/js/build_js.py \
+          python3 ./platforms/js/build_js.py build_wasm \
             --build_wasm \
-            --cmake_option="-DOPENCV_EXTRA_MODULES_PATH=../../opencv_contrib/modules" \
+            --cmake_option="-DOPENCV_EXTRA_MODULES_PATH=../opencv_contrib/modules" \
             --cmake_option="-DCMAKE_BUILD_TYPE=Release" \
             --cmake_option="-DBUILD_EXAMPLES=OFF" \
             --cmake_option="-DBUILD_TESTS=OFF" \
@@ -109,14 +80,14 @@ jobs:
       - name: Create package structure
         run: |
           mkdir -p dist
-          cp opencv/build/bin/opencv.js dist/
-          cp opencv/build/bin/opencv_js.wasm dist/
+          cp opencv/build_wasm/bin/opencv.js dist/
+          cp opencv/build_wasm/bin/opencv_js.wasm dist/
           
           # Create package.json
-          cat > dist/package.json << EOF
+          cat > dist/package.json << 'EOF'
           {
             "name": "opencv-wasm-js",
-            "version": "${{ needs.check-version.outputs.opencv_version }}",
+            "version": "${{ steps.opencv_version.outputs.version }}",
             "description": "OpenCV compiled to WebAssembly/JavaScript",
             "main": "opencv.js",
             "files": [
@@ -133,36 +104,36 @@ jobs:
             "license": "Apache-2.0",
             "repository": {
               "type": "git",
-              "url": "git+https://github.com/\${{ github.repository }}.git"
+              "url": "git+https://github.com/${{ github.repository }}.git"
             },
-            "homepage": "https://github.com/\${{ github.repository }}#readme",
+            "homepage": "https://github.com/${{ github.repository }}#readme",
             "bugs": {
-              "url": "https://github.com/\${{ github.repository }}/issues"
+              "url": "https://github.com/${{ github.repository }}/issues"
             }
           }
           EOF
           
           # Create README for the package
-          cat > dist/README.md << EOF
+          cat > dist/README.md << 'EOF'
           # OpenCV WASM JS
           
-          OpenCV \${{ needs.check-version.outputs.opencv_version }} compiled to WebAssembly/JavaScript.
+          OpenCV ${{ steps.opencv_version.outputs.version }} compiled to WebAssembly/JavaScript.
           
           ## Usage
           
-          \\\`\\\`\\\`javascript
+          ```javascript
           import cv from './opencv.js';
           
           cv.onRuntimeInitialized = () => {
             // OpenCV is ready to use
             console.log('OpenCV version:', cv.getBuildInformation());
           };
-          \\\`\\\`\\\`
+          ```
           
           ## Files
           
-          - \\\`opencv.js\\\` - Main JavaScript file
-          - \\\`opencv_js.wasm\\\` - WebAssembly binary
+          - `opencv.js` - Main JavaScript file
+          - `opencv_js.wasm` - WebAssembly binary
           
           ## License
           
@@ -172,28 +143,28 @@ jobs:
       - name: Create archive
         run: |
           cd dist
-          tar -czf ../opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.tar.gz .
-          zip -r ../opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip .
+          tar -czf ../opencv-wasm-js-${{ steps.opencv_version.outputs.version }}.tar.gz .
+          zip -r ../opencv-wasm-js-${{ steps.opencv_version.outputs.version }}.zip .
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: opencv-${{ needs.check-version.outputs.opencv_version }}
-          name: OpenCV WASM JS ${{ needs.check-version.outputs.opencv_version }}
+          tag_name: opencv-${{ steps.opencv_version.outputs.version }}
+          name: OpenCV WASM JS ${{ steps.opencv_version.outputs.version }}
           body: |
-            OpenCV ${{ needs.check-version.outputs.opencv_version }} compiled to WebAssembly/JavaScript
+            OpenCV ${{ steps.opencv_version.outputs.version }} compiled to WebAssembly/JavaScript
             
             ## Files
-            - `opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.tar.gz` - Tar archive
-            - `opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip` - Zip archive
+            - `opencv-wasm-js-${{ steps.opencv_version.outputs.version }}.tar.gz` - Tar archive
+            - `opencv-wasm-js-${{ steps.opencv_version.outputs.version }}.zip` - Zip archive
             - `opencv.js` - Main JavaScript file
             - `opencv_js.wasm` - WebAssembly binary
             
             ## Usage
             Download the files and include them in your web project. See the README for usage instructions.
           files: |
-            opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.tar.gz
-            opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip
+            opencv-wasm-js-${{ steps.opencv_version.outputs.version }}.tar.gz
+            opencv-wasm-js-${{ steps.opencv_version.outputs.version }}.zip
             dist/opencv.js
             dist/opencv_js.wasm
             dist/package.json
