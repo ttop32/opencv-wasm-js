@@ -61,7 +61,6 @@ jobs:
           cd emsdk
           ./emsdk install latest
           ./emsdk activate latest
-          echo "source /tmp/emsdk/emsdk_env.sh" >> $GITHUB_ENV
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -134,11 +133,11 @@ jobs:
             "license": "Apache-2.0",
             "repository": {
               "type": "git",
-              "url": "git+https://github.com/${{ github.repository }}.git"
+              "url": "git+https://github.com/\${{ github.repository }}.git"
             },
-            "homepage": "https://github.com/${{ github.repository }}#readme",
+            "homepage": "https://github.com/\${{ github.repository }}#readme",
             "bugs": {
-              "url": "https://github.com/${{ github.repository }}/issues"
+              "url": "https://github.com/\${{ github.repository }}/issues"
             }
           }
           EOF
@@ -147,23 +146,23 @@ jobs:
           cat > dist/README.md << EOF
           # OpenCV WASM JS
           
-          OpenCV ${{ needs.check-version.outputs.opencv_version }} compiled to WebAssembly/JavaScript.
+          OpenCV \${{ needs.check-version.outputs.opencv_version }} compiled to WebAssembly/JavaScript.
           
           ## Usage
           
-          \`\`\`javascript
+          \\\`\\\`\\\`javascript
           import cv from './opencv.js';
           
           cv.onRuntimeInitialized = () => {
             // OpenCV is ready to use
             console.log('OpenCV version:', cv.getBuildInformation());
           };
-          \`\`\`
+          \\\`\\\`\\\`
           
           ## Files
           
-          - \`opencv.js\` - Main JavaScript file
-          - \`opencv_js.wasm\` - WebAssembly binary
+          - \\\`opencv.js\\\` - Main JavaScript file
+          - \\\`opencv_js.wasm\\\` - WebAssembly binary
           
           ## License
           

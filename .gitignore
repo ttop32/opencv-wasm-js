@@ -1,1 +1,18 @@
 .vscode
+            - `opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip` - Zip archive
+            - `opencv.js` - Main JavaScript file
+            - `opencv_js.wasm` - WebAssembly binary
+            
+            ## Usage
+            Download the files and include them in your web project. See the README for usage instructions.
+          files: |
+            opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.tar.gz
+            opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip
+            dist/opencv.js
+            dist/opencv_js.wasm
+            dist/package.json
+            dist/README.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
