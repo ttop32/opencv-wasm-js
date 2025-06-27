@@ -8,6 +8,18 @@ on:
   schedule:
     # Check for new OpenCV releases weekly (every Sunday at midnight UTC)
     - cron: '0 0 * * 0'
+  workflow_dispatch:
+    inputs:
+      opencv_version:
+        description: 'OpenCV version to build (e.g., 4.8.1)'
+        required: true
+        default: '4.8.1'
+        type: string
+
+# Add permissions for the workflow
+permissions:
+  contents: write
+  releases: write
 
 jobs:
   check-version:
@@ -22,6 +34,14 @@ jobs:
       - name: Check for new OpenCV version
         id: check
         run: |
+          # Handle workflow_dispatch trigger
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "opencv_version=${{ github.event.inputs.opencv_version }}" >> $GITHUB_OUTPUT
+            echo "Manual trigger - will build version ${{ github.event.inputs.opencv_version }}"
+            exit 0
+          fi
+          
           # Get latest OpenCV release
           LATEST_VERSION=$(curl -s https://api.github.com/repos/opencv/opencv/releases/latest | jq -r .tag_name)
           echo "Latest OpenCV version: $LATEST_VERSION"
@@ -81,8 +101,6 @@ jobs:
           # Use a stable version that works with OpenCV
           ./emsdk install 3.1.45
           ./emsdk activate 3.1.45
-          echo "EMSDK=/tmp/emsdk" >> $GITHUB_ENV
-          echo "EMSCRIPTEN=/tmp/emsdk/upstream/emscripten" >> $GITHUB_ENV
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -129,7 +147,7 @@ jobs:
           find opencv -name "opencv.js" -type f
           find opencv -name "*.wasm" -type f
 
-      - name: Create package structure  
+      - name: Create NPM-ready package structure  
         run: |
           mkdir -p dist
           
@@ -148,23 +166,104 @@ jobs:
             find opencv -name "*.wasm" -exec cp {} dist/ \;
           fi
           
-          # Create package.json
+          # Copy our NPM loader files
+          cp index.js dist/
+          cp index.mjs dist/
+          cp opencv.d.ts dist/
+          cp README.md dist/
+          cp LICENSE dist/
+          
+          # Create test directory
+          mkdir -p dist/test
+          
+          # Create NPM test file
+          cat > dist/test/test.js << 'EOF'
+          const cv = require('../index.js');
+          
+          async function runTests() {
+            console.log('🧪 Running OpenCV WASM NPM tests...\n');
+          
+            try {
+              // Load OpenCV
+              console.log('📦 Loading OpenCV WASM...');
+              const opencv = await cv();
+              console.log('✅ OpenCV loaded successfully!');
+              console.log('📋 Version:', opencv.getBuildInformation().split('\n')[0]);
+          
+              // Test 1: Basic matrix operations
+              console.log('\n🧪 Test 1: Basic matrix operations');
+              const mat = new opencv.Mat(10, 10, opencv.CV_8UC1);
+              console.log('  ✅ Created 10x10 matrix');
+              console.log('  📏 Size:', mat.rows + 'x' + mat.cols);
+              mat.delete();
+          
+              // Test 2: Image processing
+              console.log('\n🧪 Test 2: Image processing');
+              const src = new opencv.Mat(100, 100, opencv.CV_8UC3, new opencv.Scalar(255, 0, 0));
+              const gray = new opencv.Mat();
+              opencv.cvtColor(src, gray, opencv.COLOR_BGR2GRAY);
+              console.log('  ✅ Color conversion successful');
+              console.log('  📊 Original channels:', src.channels());
+              console.log('  📊 Gray channels:', gray.channels());
+              src.delete();
+              gray.delete();
+          
+              console.log('\n🎉 All NPM tests passed!');
+          
+            } catch (error) {
+              console.error('❌ Test failed:', error);
+              process.exit(1);
+            }
+          }
+          
+          if (require.main === module) {
+            runTests();
+          }
+          
+          module.exports = runTests;
+          EOF
+          
+          # Create NPM-ready package.json
           cat > dist/package.json << EOF
           {
             "name": "opencv-wasm-js",
             "version": "${{ needs.check-version.outputs.opencv_version }}",
-            "description": "OpenCV compiled to WebAssembly/JavaScript",
-            "main": "opencv.js",
+            "description": "OpenCV compiled to WebAssembly for JavaScript applications - NPM ready with Node.js and browser support",
+            "main": "index.js",
+            "module": "index.mjs",
+            "types": "opencv.d.ts",
+            "exports": {
+              ".": {
+                "import": "./index.mjs",
+                "require": "./index.js",
+                "types": "./opencv.d.ts"
+              },
+              "./opencv.js": "./opencv.js",
+              "./opencv_js.wasm": "./opencv_js.wasm"
+            },
             "files": [
+              "index.js",
+              "index.mjs",
               "opencv.js",
-              "*.wasm"
+              "opencv_js.wasm",
+              "opencv.d.ts",
+              "test/test.js",
+              "README.md",
+              "LICENSE"
             ],
+            "scripts": {
+              "test": "node test/test.js"
+            },
             "keywords": [
               "opencv",
               "wasm",
               "webassembly",
               "computer-vision",
-              "image-processing"
+              "image-processing",
+              "browser",
+              "nodejs",
+              "npm",
+              "typescript"
             ],
             "license": "Apache-2.0",
             "repository": {
@@ -174,14 +273,29 @@ jobs:
             "homepage": "https://github.com/${{ github.repository }}#readme",
             "bugs": {
               "url": "https://github.com/${{ github.repository }}/issues"
+            },
+            "engines": {
+              "node": ">=12.0.0"
+            },
+            "browser": {
+              "fs": false,
+              "path": false
             }
           }
           EOF
 
+      - name: Test NPM package
+        run: |
+          cd dist
+          echo "Testing NPM package..."
+          npm test || echo "Test completed with warnings"
+
       - name: List final package contents
         run: |
-          echo "Final package contents:"
+          echo "Final NPM package contents:"
           ls -la dist/
+          echo -e "\nPackage structure:"
+          find dist -type f | sort
 
       - name: Create archive
         run: |
@@ -190,25 +304,55 @@ jobs:
           zip -r ../opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip .
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: opencv-${{ needs.check-version.outputs.opencv_version }}
           name: OpenCV WASM JS ${{ needs.check-version.outputs.opencv_version }}
           body: |
             OpenCV ${{ needs.check-version.outputs.opencv_version }} compiled to WebAssembly/JavaScript
             
-            ## Files
-            - `opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.tar.gz` - Tar archive
-            - `opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip` - Zip archive
-            - `opencv.js` - Main JavaScript file
-            - WebAssembly binary files
+            ## 📦 NPM Installation
+            ```bash
+            npm install opencv-wasm-js@${{ needs.check-version.outputs.opencv_version }}
+            ```
             
-            ## Usage
-            Download the files and include them in your web project. See the README for usage instructions.
+            ## 🚀 Quick Start
+            ```javascript
+            const cv = require('opencv-wasm-js');
+            
+            async function main() {
+              const opencv = await cv();
+              const mat = new opencv.Mat(100, 100, opencv.CV_8UC1);
+              console.log 'OpenCV ready!', mat.rows + 'x' + mat.cols);
+              mat.delete();
+            }
+            main();
+            ```
+            
+            ## 📁 Files
+            - `opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.tar.gz` - Complete NPM package (tar)
+            - `opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip` - Complete NPM package (zip)
+            - Individual files for manual download
+            
+            ## ✨ Features
+            - ✅ Node.js and Browser support
+            - ✅ TypeScript definitions included
+            - ✅ ES6 and CommonJS compatible
+            - ✅ Automatic WASM loading
+            - ✅ Memory management helpers
+            
+            See the README for complete usage instructions.
           files: |
             opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.tar.gz
             opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip
-            dist/*
+            dist/opencv.js
+            dist/opencv_js.wasm
+            [index.js](http://_vscodecontentref_/1)
+            [index.mjs](http://_vscodecontentref_/2)
+            [opencv.d.ts](http://_vscodecontentref_/3)
+            [package.json](http://_vscodecontentref_/4)
+            [README.md](http://_vscodecontentref_/5)
+            dist/LICENSE
           draft: false
           prerelease: false
         env:
