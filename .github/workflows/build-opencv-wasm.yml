@@ -99,7 +99,8 @@ jobs:
             python3-pip \
             git \
             wget \
-            unzip
+            unzip \
+            bc
 
       - name: Install specific Emscripten version
         run: |
@@ -151,7 +152,7 @@ jobs:
             --cmake_option="-DCV_ENABLE_INTRINSICS=OFF" \
             --cmake_option="-DCPU_BASELINE=" \
             --cmake_option="-DCPU_DISPATCH=" \
-            --build_flags="-s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_NAME=cv -s USE_ES6_IMPORT_META=0"
+            --build_flags="-s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_NAME='cv' -s USE_ES6_IMPORT_META=0 -s SINGLE_FILE=0"
 
       - name: Verify and locate build output with detailed search
         run: |
@@ -159,19 +160,13 @@ jobs:
           echo "Current directory: $(pwd)"
           
           echo -e "\n=== All JS files in opencv directory ==="
-          find opencv -name "*.js" -type f -exec ls -la {} \; 2>/dev/null || echo "No JS files found"
+          find opencv -name "*.js" -type f -exec ls -lh {} \; 2>/dev/null || echo "No JS files found"
           
           echo -e "\n=== All WASM files in opencv directory ==="
-          find opencv -name "*.wasm" -type f -exec ls -la {} \; 2>/dev/null || echo "No WASM files found"
+          find opencv -name "*.wasm" -type f -exec ls -lh {} \; 2>/dev/null || echo "No WASM files found"
           
-          echo -e "\n=== Directory structure of build outputs ==="
-          find opencv -type d -name "*build*" -exec echo "Directory: {}" \; -exec ls -la {} \; 2>/dev/null || echo "No build directories found"
-          
-          echo -e "\n=== Contents of opencv directory ==="
-          ls -la opencv/ || echo "opencv directory not accessible"
-          
-          echo -e "\n=== Checking for bin directories ==="
-          find opencv -name "bin" -type d -exec echo "Found bin directory: {}" \; -exec ls -la {} \; 2>/dev/null || echo "No bin directories found"
+          echo -e "\n=== Build directory contents ==="
+          find opencv -type d -name "*build*" -exec echo "Directory: {}" \; -exec ls -lah {} \; 2>/dev/null || echo "No build directories found"
 
       - name: Create separate OpenCV JS and WASM files
         run: |
@@ -258,10 +253,11 @@ jobs:
           if [ -n "$OPENCV_JS" ] && [ -f "$OPENCV_JS" ]; then
             cp "$OPENCV_JS" dist/opencv.js
             FILE_SIZE=$(wc -c < "$OPENCV_JS")
-            echo "✅ Copied opencv.js ($FILE_SIZE bytes)"
+            FILE_SIZE_MB=$(echo "scale=2; $FILE_SIZE/1024/1024" | bc -l 2>/dev/null || echo "?")
+            echo "✅ Copied opencv.js ($FILE_SIZE bytes / ${FILE_SIZE_MB} MB)"
             
-            # Verify the JS file contains OpenCV
-            if grep -q "opencv\|cv\|Mat\|WASM" "$OPENCV_JS" 2>/dev/null; then
+            # Verify the JS file contains OpenCV code
+            if grep -q "opencv\|Mat\|WASM\|Module" "$OPENCV_JS" 2>/dev/null; then
               echo "✅ JS file appears to contain OpenCV code"
             else
               echo "⚠️ JS file might not contain OpenCV code"
@@ -269,25 +265,26 @@ jobs:
           else
             echo "❌ Error: opencv.js not found!"
             echo "Available JS files in opencv directory:"
-            find opencv -name "*.js" -type f -exec ls -la {} \; 2>/dev/null || echo "No JS files found"
+            find opencv -name "*.js" -type f -exec ls -lah {} \; 2>/dev/null || echo "No JS files found"
             exit 1
           fi
           
           if [ -n "$OPENCV_WASM" ] && [ -f "$OPENCV_WASM" ]; then
             cp "$OPENCV_WASM" dist/opencv_js.wasm
             FILE_SIZE=$(wc -c < "$OPENCV_WASM")
-            echo "✅ Copied opencv_js.wasm ($FILE_SIZE bytes)"
+            FILE_SIZE_MB=$(echo "scale=2; $FILE_SIZE/1024/1024" | bc -l 2>/dev/null || echo "?")
+            echo "✅ Copied opencv_js.wasm ($FILE_SIZE bytes / ${FILE_SIZE_MB} MB)"
             
             # Verify WASM file is valid
-            if file "$OPENCV_WASM" | grep -q "WebAssembly"; then
+            if command -v file >/dev/null && file "$OPENCV_WASM" | grep -q "WebAssembly"; then
               echo "✅ WASM file is valid WebAssembly binary"
             else
-              echo "⚠️ File might not be a valid WASM binary"
+              echo "⚠️ File might not be a valid WASM binary (file command not available or file not recognized)"
             fi
           else
             echo "❌ Error: opencv_js.wasm not found!"
             echo "Available WASM files in opencv directory:"
-            find opencv -name "*.wasm" -type f -exec ls -la {} \; 2>/dev/null || echo "No WASM files found"
+            find opencv -name "*.wasm" -type f -exec ls -lah {} \; 2>/dev/null || echo "No WASM files found"
             exit 1
           fi
           
@@ -308,17 +305,19 @@ jobs:
           
           echo -e "\n=== Final package verification ==="
           echo "📦 Package contents:"
-          ls -la dist/
+          ls -lah dist/
           
-          echo -e "\n📊 File sizes:"
+          echo -e "\n📊 File sizes summary:"
           if [ -f "dist/opencv.js" ]; then
             JS_SIZE=$(wc -c < dist/opencv.js)
-            echo "✅ opencv.js: $JS_SIZE bytes ($(echo "scale=2; $JS_SIZE/1024/1024" | bc -l 2>/dev/null || echo "?") MB)"
+            JS_SIZE_MB=$(echo "scale=2; $JS_SIZE/1024/1024" | bc -l 2>/dev/null || echo "?")
+            echo "✅ opencv.js: $JS_SIZE bytes (${JS_SIZE_MB} MB)"
           fi
           
           if [ -f "dist/opencv_js.wasm" ]; then
             WASM_SIZE=$(wc -c < dist/opencv_js.wasm)
-            echo "✅ opencv_js.wasm: $WASM_SIZE bytes ($(echo "scale=2; $WASM_SIZE/1024/1024" | bc -l 2>/dev/null || echo "?") MB)"
+            WASM_SIZE_MB=$(echo "scale=2; $WASM_SIZE/1024/1024" | bc -l 2>/dev/null || echo "?")
+            echo "✅ opencv_js.wasm: $WASM_SIZE bytes (${WASM_SIZE_MB} MB)"
           fi
           
           echo -e "\n✅ Both OpenCV files successfully created as separate files!"
@@ -414,7 +413,7 @@ jobs:
       - name: Final verification of separated files
         run: |
           echo "=== 📋 Final NPM package verification ==="
-          ls -la dist/
+          ls -lah dist/
           
           echo -e "\n=== 📁 Package structure ==="
           find dist -type f | sort
@@ -447,7 +446,7 @@ jobs:
           zip -r ../opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip .
           
           echo "📦 Created archives:"
-          ls -la ../opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.*
+          ls -lah ../opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.*
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -520,6 +519,13 @@ jobs:
             const cv = require('opencv-wasm-js');
             const opencv = await cv();
             // opencv.js and opencv_js.wasm are loaded automatically
+            ```
+            
+            ### Direct File Access
+            ```javascript
+            // Access files directly
+            const opencvJsPath = require.resolve('opencv-wasm-js/opencv.js');
+            const opencvWasmPath = require.resolve('opencv-wasm-js/opencv_js.wasm');
             ```
             
             See the README for complete usage instructions.
