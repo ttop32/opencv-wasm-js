@@ -73,13 +73,14 @@ jobs:
             wget \
             unzip
 
-      - name: Install Emscripten
+      - name: Install specific Emscripten version
         run: |
           cd /tmp
           git clone https://github.com/emscripten-core/emsdk.git
           cd emsdk
-          ./emsdk install latest
-          ./emsdk activate latest
+          # Use a stable version that works with OpenCV
+          ./emsdk install 3.1.45
+          ./emsdk activate 3.1.45
           echo "EMSDK=/tmp/emsdk" >> $GITHUB_ENV
           echo "EMSCRIPTEN=/tmp/emsdk/upstream/emscripten" >> $GITHUB_ENV
 
@@ -92,9 +93,6 @@ jobs:
         run: |
           echo "Cloning OpenCV version: ${{ needs.check-version.outputs.opencv_version }}"
           git clone --depth 1 --branch ${{ needs.check-version.outputs.opencv_version }} https://github.com/opencv/opencv.git
-          
-          # Only clone opencv_contrib if we're going to use it
-          # git clone --depth 1 --branch ${{ needs.check-version.outputs.opencv_version }} https://github.com/opencv/opencv_contrib.git
 
       - name: Build OpenCV WASM
         run: |
@@ -102,7 +100,7 @@ jobs:
           
           cd opencv
           
-          # Create a simple build without contrib modules first
+          # Build with compatible settings
           python3 ./platforms/js/build_js.py build_wasm \
             --build_wasm \
             --cmake_option="-DCMAKE_BUILD_TYPE=Release" \
@@ -122,8 +120,7 @@ jobs:
             --cmake_option="-DWITH_JPEG=ON" \
             --cmake_option="-DCV_ENABLE_INTRINSICS=OFF" \
             --cmake_option="-DCPU_BASELINE=" \
-            --cmake_option="-DCPU_DISPATCH=" \
-            --build_flags="-s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_ES6=1"
+            --cmake_option="-DCPU_DISPATCH="
 
       - name: Verify build output
         run: |
@@ -132,7 +129,7 @@ jobs:
           find opencv -name "opencv.js" -type f
           find opencv -name "*.wasm" -type f
 
-      - name: Create package structure
+      - name: Create package structure  
         run: |
           mkdir -p dist
           
@@ -179,33 +176,6 @@ jobs:
               "url": "https://github.com/${{ github.repository }}/issues"
             }
           }
-          EOF
-          
-          # Create README for the package
-          cat > dist/README.md << EOF
-          # OpenCV WASM JS
-          
-          OpenCV ${{ needs.check-version.outputs.opencv_version }} compiled to WebAssembly/JavaScript.
-          
-          ## Usage
-          
-          \`\`\`javascript
-          import cv from './opencv.js';
-          
-          cv.onRuntimeInitialized = () => {
-            // OpenCV is ready to use
-            console.log('OpenCV version:', cv.getBuildInformation());
-          };
-          \`\`\`
-          
-          ## Files
-          
-          - \`opencv.js\` - Main JavaScript file
-          - \`*.wasm\` - WebAssembly binary files
-          
-          ## License
-          
-          Apache License 2.0
           EOF
 
       - name: List final package contents
