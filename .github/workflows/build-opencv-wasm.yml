@@ -5,9 +5,50 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  schedule:
+    # Check for new OpenCV releases weekly (every Sunday at midnight UTC)
+    - cron: '0 0 * * 0'
 
 jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      opencv_version: ${{ steps.check.outputs.opencv_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for new OpenCV version
+        id: check
+        run: |
+          # Get latest OpenCV release
+          LATEST_VERSION=$(curl -s https://api.github.com/repos/opencv/opencv/releases/latest | jq -r .tag_name)
+          echo "Latest OpenCV version: $LATEST_VERSION"
+          
+          # For manual triggers (push/PR), always build
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "opencv_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+            echo "Manual trigger - will build"
+            exit 0
+          fi
+          
+          # For scheduled runs, check if we already have this version
+          if gh release view "opencv-$LATEST_VERSION" --repo ${{ github.repository }} >/dev/null 2>&1; then
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "Release opencv-$LATEST_VERSION already exists - skipping build"
+          else
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "opencv_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+            echo "New version found - will build opencv-$LATEST_VERSION"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build:
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     
     steps:
@@ -19,6 +60,19 @@ jobs:
         with:
           node-version: '18'
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            build-essential \
+            jq \
+            python3 \
+            python3-pip \
+            git \
+            wget \
+            unzip
+
       - name: Install Emscripten
         run: |
           cd /tmp
@@ -26,39 +80,31 @@ jobs:
           cd emsdk
           ./emsdk install latest
           ./emsdk activate latest
+          echo "EMSDK=/tmp/emsdk" >> $GITHUB_ENV
+          echo "EMSCRIPTEN=/tmp/emsdk/upstream/emscripten" >> $GITHUB_ENV
 
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Clone OpenCV repositories
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake build-essential jq
-
-      - name: Get OpenCV latest version
-        id: opencv_version
-        run: |
-          VERSION=$(curl -s https://api.github.com/repos/opencv/opencv/releases/latest | jq -r .tag_name)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Using OpenCV version: $VERSION"
-
-      - name: Clone OpenCV
-        run: |
-          git clone --depth 1 --branch ${{ steps.opencv_version.outputs.version }} https://github.com/opencv/opencv.git
-          git clone --depth 1 --branch ${{ steps.opencv_version.outputs.version }} https://github.com/opencv/opencv_contrib.git
+          echo "Cloning OpenCV version: ${{ needs.check-version.outputs.opencv_version }}"
+          git clone --depth 1 --branch ${{ needs.check-version.outputs.opencv_version }} https://github.com/opencv/opencv.git
+          
+          # Only clone opencv_contrib if we're going to use it
+          # git clone --depth 1 --branch ${{ needs.check-version.outputs.opencv_version }} https://github.com/opencv/opencv_contrib.git
 
       - name: Build OpenCV WASM
         run: |
           source /tmp/emsdk/emsdk_env.sh
-          export EMSCRIPTEN=/tmp/emsdk/upstream/emscripten
           
           cd opencv
           
+          # Create a simple build without contrib modules first
           python3 ./platforms/js/build_js.py build_wasm \
             --build_wasm \
-            --cmake_option="-DOPENCV_EXTRA_MODULES_PATH=../opencv_contrib/modules" \
             --cmake_option="-DCMAKE_BUILD_TYPE=Release" \
             --cmake_option="-DBUILD_EXAMPLES=OFF" \
             --cmake_option="-DBUILD_TESTS=OFF" \
@@ -75,24 +121,46 @@ jobs:
             --cmake_option="-DWITH_PNG=ON" \
             --cmake_option="-DWITH_JPEG=ON" \
             --cmake_option="-DCV_ENABLE_INTRINSICS=OFF" \
+            --cmake_option="-DCPU_BASELINE=" \
+            --cmake_option="-DCPU_DISPATCH=" \
             --build_flags="-s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_ES6=1"
+
+      - name: Verify build output
+        run: |
+          echo "Checking build output..."
+          ls -la opencv/build_wasm/bin/ || echo "build_wasm/bin directory not found"
+          find opencv -name "opencv.js" -type f
+          find opencv -name "*.wasm" -type f
 
       - name: Create package structure
         run: |
           mkdir -p dist
-          cp opencv/build_wasm/bin/opencv.js dist/
-          cp opencv/build_wasm/bin/opencv_js.wasm dist/
+          
+          # Find and copy the built files
+          if [ -f "opencv/build_wasm/bin/opencv.js" ]; then
+            cp opencv/build_wasm/bin/opencv.js dist/
+          else
+            echo "Error: opencv.js not found"
+            exit 1
+          fi
+          
+          if [ -f "opencv/build_wasm/bin/opencv_js.wasm" ]; then
+            cp opencv/build_wasm/bin/opencv_js.wasm dist/
+          else
+            echo "Warning: opencv_js.wasm not found, checking for alternative names"
+            find opencv -name "*.wasm" -exec cp {} dist/ \;
+          fi
           
           # Create package.json
-          cat > dist/package.json << 'EOF'
+          cat > dist/package.json << EOF
           {
             "name": "opencv-wasm-js",
-            "version": "${{ steps.opencv_version.outputs.version }}",
+            "version": "${{ needs.check-version.outputs.opencv_version }}",
             "description": "OpenCV compiled to WebAssembly/JavaScript",
             "main": "opencv.js",
             "files": [
               "opencv.js",
-              "opencv_js.wasm"
+              "*.wasm"
             ],
             "keywords": [
               "opencv",
@@ -114,61 +182,63 @@ jobs:
           EOF
           
           # Create README for the package
-          cat > dist/README.md << 'EOF'
+          cat > dist/README.md << EOF
           # OpenCV WASM JS
           
-          OpenCV ${{ steps.opencv_version.outputs.version }} compiled to WebAssembly/JavaScript.
+          OpenCV ${{ needs.check-version.outputs.opencv_version }} compiled to WebAssembly/JavaScript.
           
           ## Usage
           
-          ```javascript
+          \`\`\`javascript
           import cv from './opencv.js';
           
           cv.onRuntimeInitialized = () => {
             // OpenCV is ready to use
             console.log('OpenCV version:', cv.getBuildInformation());
           };
-          ```
+          \`\`\`
           
           ## Files
           
-          - `opencv.js` - Main JavaScript file
-          - `opencv_js.wasm` - WebAssembly binary
+          - \`opencv.js\` - Main JavaScript file
+          - \`*.wasm\` - WebAssembly binary files
           
           ## License
           
           Apache License 2.0
           EOF
 
+      - name: List final package contents
+        run: |
+          echo "Final package contents:"
+          ls -la dist/
+
       - name: Create archive
         run: |
           cd dist
-          tar -czf ../opencv-wasm-js-${{ steps.opencv_version.outputs.version }}.tar.gz .
-          zip -r ../opencv-wasm-js-${{ steps.opencv_version.outputs.version }}.zip .
+          tar -czf ../opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.tar.gz .
+          zip -r ../opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip .
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: opencv-${{ steps.opencv_version.outputs.version }}
-          name: OpenCV WASM JS ${{ steps.opencv_version.outputs.version }}
+          tag_name: opencv-${{ needs.check-version.outputs.opencv_version }}
+          name: OpenCV WASM JS ${{ needs.check-version.outputs.opencv_version }}
           body: |
-            OpenCV ${{ steps.opencv_version.outputs.version }} compiled to WebAssembly/JavaScript
+            OpenCV ${{ needs.check-version.outputs.opencv_version }} compiled to WebAssembly/JavaScript
             
             ## Files
-            - `opencv-wasm-js-${{ steps.opencv_version.outputs.version }}.tar.gz` - Tar archive
-            - `opencv-wasm-js-${{ steps.opencv_version.outputs.version }}.zip` - Zip archive
+            - `opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.tar.gz` - Tar archive
+            - `opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip` - Zip archive
             - `opencv.js` - Main JavaScript file
-            - `opencv_js.wasm` - WebAssembly binary
+            - WebAssembly binary files
             
             ## Usage
             Download the files and include them in your web project. See the README for usage instructions.
           files: |
-            opencv-wasm-js-${{ steps.opencv_version.outputs.version }}.tar.gz
-            opencv-wasm-js-${{ steps.opencv_version.outputs.version }}.zip
-            dist/opencv.js
-            dist/opencv_js.wasm
-            dist/package.json
-            dist/README.md
+            opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.tar.gz
+            opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip
+            dist/*
           draft: false
           prerelease: false
         env:
