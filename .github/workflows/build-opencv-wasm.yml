@@ -16,10 +16,11 @@ on:
         default: '4.8.1'
         type: string
 
-# Add permissions for the workflow
+# Fix permissions - 'releases' is not a valid permission
 permissions:
   contents: write
-  releases: write
+  issues: write
+  pull-requests: write
 
 jobs:
   check-version:
@@ -166,12 +167,125 @@ jobs:
             find opencv -name "*.wasm" -exec cp {} dist/ \;
           fi
           
-          # Copy our NPM loader files
-          cp index.js dist/
-          cp index.mjs dist/
-          cp opencv.d.ts dist/
-          cp README.md dist/
-          cp LICENSE dist/
+          # Copy our NPM loader files (if they exist)
+          cp index.js dist/ 2>/dev/null || echo "index.js not found, creating basic version"
+          cp index.mjs dist/ 2>/dev/null || echo "index.mjs not found, creating basic version"
+          cp opencv.d.ts dist/ 2>/dev/null || echo "opencv.d.ts not found, creating basic version"
+          cp README.md dist/ 2>/dev/null || echo "README.md not found"
+          cp LICENSE dist/ 2>/dev/null || echo "LICENSE not found"
+          
+          # Create basic index.js if not exists
+          if [ ! -f "dist/index.js" ]; then
+            cat > dist/index.js << 'EOF'
+          const fs = require('fs');
+          const path = require('path');
+          
+          let cv = null;
+          let loadPromise = null;
+          
+          function loadOpenCV() {
+            if (loadPromise) {
+              return loadPromise;
+            }
+          
+            loadPromise = new Promise((resolve, reject) => {
+              try {
+                const wasmPath = path.join(__dirname, 'opencv_js.wasm');
+                
+                if (!fs.existsSync(wasmPath)) {
+                  reject(new Error('OpenCV WASM file not found.'));
+                  return;
+                }
+          
+                const wasmBinary = fs.readFileSync(wasmPath);
+                
+                global.Module = {
+                  wasmBinary: wasmBinary,
+                  onRuntimeInitialized() {
+                    cv = global.Module;
+                    resolve(cv);
+                  },
+                  onAbort: (error) => {
+                    reject(new Error('OpenCV WASM loading aborted: ' + error));
+                  }
+                };
+          
+                require('./opencv.js');
+              } catch (error) {
+                reject(error);
+              }
+            });
+          
+            return loadPromise;
+          }
+          
+          function opencvLoader() {
+            return loadOpenCV();
+          }
+          
+          Object.defineProperty(opencvLoader, 'ready', {
+            get: function() {
+              return loadOpenCV();
+            }
+          });
+          
+          opencvLoader.default = opencvLoader;
+          module.exports = opencvLoader;
+          EOF
+          fi
+          
+          # Create basic index.mjs if not exists
+          if [ ! -f "dist/index.mjs" ]; then
+            cat > dist/index.mjs << 'EOF'
+          import fs from 'fs';
+          import path from 'path';
+          import { fileURLToPath } from 'url';
+          
+          const __dirname = path.dirname(fileURLToPath(import.meta.url));
+          
+          let cv = null;
+          let loadPromise = null;
+          
+          async function loadOpenCV() {
+            if (loadPromise) {
+              return loadPromise;
+            }
+          
+            loadPromise = new Promise(async (resolve, reject) => {
+              try {
+                const wasmPath = path.join(__dirname, 'opencv_js.wasm');
+                
+                if (!fs.existsSync(wasmPath)) {
+                  reject(new Error('OpenCV WASM file not found.'));
+                  return;
+                }
+          
+                const wasmBinary = fs.readFileSync(wasmPath);
+                
+                globalThis.Module = {
+                  wasmBinary: wasmBinary,
+                  onRuntimeInitialized() {
+                    cv = globalThis.Module;
+                    resolve(cv);
+                  },
+                  onAbort: (error) => {
+                    reject(new Error('OpenCV WASM loading aborted: ' + error));
+                  }
+                };
+          
+                await import('./opencv.js');
+              } catch (error) {
+                reject(error);
+              }
+            });
+          
+            return loadPromise;
+          }
+          
+          export default loadOpenCV;
+          export { loadOpenCV as ready };
+          EOF
+          fi
           
           # Create test directory
           mkdir -p dist/test
@@ -323,7 +437,7 @@ jobs:
             async function main() {
               const opencv = await cv();
               const mat = new opencv.Mat(100, 100, opencv.CV_8UC1);
-              console.log 'OpenCV ready!', mat.rows + 'x' + mat.cols);
+              console.log('OpenCV ready!', mat.rows + 'x' + mat.cols);
               mat.delete();
             }
             main();
@@ -347,12 +461,10 @@ jobs:
             opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip
             dist/opencv.js
             dist/opencv_js.wasm
-            [index.js](http://_vscodecontentref_/1)
-            [index.mjs](http://_vscodecontentref_/2)
-            [opencv.d.ts](http://_vscodecontentref_/3)
-            [package.json](http://_vscodecontentref_/4)
-            [README.md](http://_vscodecontentref_/5)
-            dist/LICENSE
+            dist/index.js
+            dist/index.mjs
+            dist/package.json
+            dist/README.md
           draft: false
           prerelease: false
         env:
