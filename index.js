@@ -15,19 +15,8 @@ function loadOpenCV() {
       const isNode = typeof window === 'undefined' && typeof global !== 'undefined';
       
       if (isNode) {
-        // Node.js environment
-        const wasmPath = path.join(__dirname, 'opencv_js.wasm');
-        
-        // Check if WASM file exists
-        if (!fs.existsSync(wasmPath)) {
-          reject(new Error('OpenCV WASM file not found. Please ensure opencv_js.wasm is in the package directory.'));
-          return;
-        }
-
-        const wasmBinary = fs.readFileSync(wasmPath);
-        
+        // Node.js environment - single file with embedded WASM
         global.Module = {
-          wasmBinary: wasmBinary,
           onRuntimeInitialized() {
             cv = global.Module;
             resolve(cv);
@@ -37,7 +26,7 @@ function loadOpenCV() {
           }
         };
 
-        // Load the OpenCV JavaScript file
+        // Load the single OpenCV JavaScript file (WASM is embedded)
         require('./opencv.js');
       } else {
         // Browser environment
