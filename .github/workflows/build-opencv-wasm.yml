@@ -131,14 +131,31 @@ jobs:
             unzip \
             bc
 
-      - name: Install specific Emscripten version
+      - name: Install and setup Emscripten properly
         run: |
-          cd /tmp
+          # Install Emscripten in home directory for proper permissions
+          cd ~
           git clone https://github.com/emscripten-core/emsdk.git
           cd emsdk
-          # Use a stable version that works with OpenCV
+          
+          # Install and activate specific version
           ./emsdk install 3.1.45
           ./emsdk activate 3.1.45
+          
+          # Source the environment to set all variables
+          source ./emsdk_env.sh
+          
+          # Verify Emscripten is working
+          echo "✅ Emscripten installed at: $EMSCRIPTEN"
+          echo "✅ Emscripten version:"
+          emcc --version
+          
+          # Export environment variables for subsequent steps
+          echo "EMSDK=$HOME/emsdk" >> $GITHUB_ENV
+          echo "EMSCRIPTEN=$HOME/emsdk/upstream/emscripten" >> $GITHUB_ENV
+          echo "EMSDK_NODE=$HOME/emsdk/node/22.16.0_64bit/bin/node" >> $GITHUB_ENV
+          echo "$HOME/emsdk" >> $GITHUB_PATH
+          echo "$HOME/emsdk/upstream/emscripten" >> $GITHUB_PATH
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -152,7 +169,18 @@ jobs:
 
       - name: Build OpenCV WASM as single file
         run: |
-          source /tmp/emsdk/emsdk_env.sh
+          # Verify Emscripten environment
+          echo "🔍 Verifying Emscripten environment:"
+          echo "EMSDK: $EMSDK"
+          echo "EMSCRIPTEN: $EMSCRIPTEN"
+          echo "EMSDK_NODE: $EMSDK_NODE"
+          
+          # Test emcc
+          which emcc || echo "emcc not found in PATH"
+          emcc --version || echo "emcc version check failed"
+          
+          # Ensure environment is properly loaded
+          source $HOME/emsdk/emsdk_env.sh
           
           cd opencv
           
@@ -163,6 +191,7 @@ jobs:
           echo "🔧 Building OpenCV WASM as single file with embedded WASM..."
           python3 ./platforms/js/build_js.py build_wasm \
             --build_wasm \
+            --emscripten_dir="$EMSCRIPTEN" \
             --cmake_option="-DCMAKE_BUILD_TYPE=Release" \
             --cmake_option="-DBUILD_EXAMPLES=OFF" \
             --cmake_option="-DBUILD_TESTS=OFF" \
@@ -383,19 +412,19 @@ jobs:
             
             ## 📁 Files Available
             - **Complete NPM Package:**
-              - [opencv-wasm-js-${{ needs.check-version.outputs.package_version }}.tar.gz](http://_vscodecontentref_/2) - Complete NPM package (tar)
-              - [opencv-wasm-js-${{ needs.check-version.outputs.package_version }}.zip](http://_vscodecontentref_/3) - Complete NPM package (zip)
+              - opencv-wasm-js-${{ needs.check-version.outputs.package_version }}.tar.gz - Complete NPM package (tar)
+              - opencv-wasm-js-${{ needs.check-version.outputs.package_version }}.zip - Complete NPM package (zip)
             
             - **Single File:**
-              - [opencv.js](http://_vscodecontentref_/4) - OpenCV JavaScript runtime (**single file with embedded WASM**)
-              - [index.js](http://_vscodecontentref_/5) - NPM CommonJS loader
-              - [index.mjs](http://_vscodecontentref_/6) - NPM ES6 module loader
-              - [opencv.d.ts](http://_vscodecontentref_/7) - TypeScript definitions
-              - [package.json](http://_vscodecontentref_/8) - NPM package configuration
+              - opencv.js - OpenCV JavaScript runtime (**single file with embedded WASM**)
+              - [index.js](http://_vscodecontentref_/0) - NPM CommonJS loader
+              - [index.mjs](http://_vscodecontentref_/1) - NPM ES6 module loader
+              - [opencv.d.ts](http://_vscodecontentref_/2) - TypeScript definitions
+              - [package.json](http://_vscodecontentref_/3) - NPM package configuration
             
             ## ✨ Features
-            - ✅ **Single File**: [opencv.js](http://_vscodecontentref_/9) contains everything - **WASM is embedded** for easy deployment
-            - ✅ **NPM Ready**: Direct installation with [npm install opencv-wasm-js](http://_vscodecontentref_/10)
+            - ✅ **Single File**: opencv.js contains everything - **WASM is embedded** for easy deployment
+            - ✅ **NPM Ready**: Direct installation with npm install opencv-wasm-js
             - ✅ **Node.js Support**: Automatic loading in Node.js
             - ✅ **Browser Support**: Script tag loading or module bundler compatible
             - ✅ **TypeScript**: Full TypeScript definitions included
@@ -436,11 +465,11 @@ jobs:
             opencv-wasm-js-${{ needs.check-version.outputs.package_version }}.tar.gz
             opencv-wasm-js-${{ needs.check-version.outputs.package_version }}.zip
             dist/opencv.js
-            [index.js](http://_vscodecontentref_/11)
-            [index.mjs](http://_vscodecontentref_/12)
-            [opencv.d.ts](http://_vscodecontentref_/13)
-            [package.json](http://_vscodecontentref_/14)
-            [README.md](http://_vscodecontentref_/15)
+            dist/index.js
+            dist/index.mjs
+            dist/opencv.d.ts
+            dist/package.json
+            dist/README.md
             dist/LICENSE
           draft: false
           prerelease: false
@@ -472,4 +501,4 @@ jobs:
           echo "npm install opencv-wasm-js@${{ needs.check-version.outputs.package_version }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Single file deployment:** Only \[opencv.js\](http://_vscodecontentref_/16) needed - WASM is embedded for maximum simplicity." >> $GITHUB_STEP_SUMMARY
+          echo "**Single file deployment:** Only opencv.js needed - WASM is embedded for maximum simplicity." >> $GITHUB_STEP_SUMMARY
