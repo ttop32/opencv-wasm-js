@@ -1,60 +1,60 @@
 {
-  "name": "opencv-wasm-js",
-  "version": "4.8.1",
-  "description": "OpenCV compiled to WebAssembly for JavaScript applications - Single file with embedded WASM",
-  "main": "index.js",
-  "module": "index.mjs",
-  "types": "opencv.d.ts",
-  "exports": {
-    ".": {
-      "import": "./index.mjs",
-      "require": "./index.js",
-      "types": "./opencv.d.ts"
+    "name": "opencv-wasm-js",
+    "version": "4.8.1",
+    "description": "OpenCV compiled to WebAssembly for JavaScript applications - NPM ready with Node.js and browser support",
+    "main": "index.js",
+    "module": "index.mjs",
+    "types": "opencv.d.ts",
+    "exports": {
+      ".": {
+        "import": "./index.mjs",
+        "require": "./index.js",
+        "types": "./opencv.d.ts"
+      },
+      "./opencv.js": "./opencv.js",
+      "./opencv_js.wasm": "./opencv_js.wasm"
     },
-    "./opencv.js": "./opencv.js"
-  },
-  "files": [
-    "index.js",
-    "index.mjs",
-    "opencv.js",
-    "opencv.d.ts",
-    "test/",
-    "README.md",
-    "LICENSE"
-  ],
-  "scripts": {
-    "test": "node test/test.js",
-    "test:browser": "open test/test.html",
-    "prepublishOnly": "echo 'Ready for NPM publishing'"
-  },
-  "keywords": [
-    "opencv",
-    "wasm",
-    "webassembly",
-    "computer-vision",
-    "image-processing",
-    "browser",
-    "nodejs",
-    "npm",
-    "typescript",
-    "machine-learning",
-    "single-file",
-    "embedded-wasm"
-  ],
-  "license": "Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/ttop32/opencv-wasm-js.git"
-  },
-  "homepage": "https://github.com/ttop32/opencv-wasm-js#readme",
-  "bugs": {
-    "url": "https://github.com/ttop32/opencv-wasm-js/issues"
-  },
-  "engines": {
-    "node": ">=12.0.0"
-  },
-  "browser": {
-    "fs": false,
-    "path": false
+    "files": [
+      "index.js",
+      "index.mjs",
+      "opencv.js",
+      "opencv_js.wasm",
+      "opencv.d.ts",
+      "test/",
+      "README.md",
+      "LICENSE"
+    ],
+    "scripts": {
+      "test": "node test/test.js",
+      "test:browser": "open test/test.html",
+      "prepublishOnly": "echo 'Ready for NPM publishing'"
+    },
+    "keywords": [
+      "opencv",
+      "wasm",
+      "webassembly",
+      "computer-vision",
+      "image-processing",
+      "browser",
+      "nodejs",
+      "npm",
+      "typescript",
+      "machine-learning"
+    ],
+    "license": "Apache-2.0",
+    "repository": {
+      "type": "git",
+      "url": "git+https://github.com/ttop32/opencv-wasm-js.git"
+    },
+    "homepage": "https://github.com/ttop32/opencv-wasm-js#readme",
+    "bugs": {
+      "url": "https://github.com/ttop32/opencv-wasm-js/issues"
+    },
+    "engines": {
+      "node": ">=12.0.0"
+    },
+    "browser": {
+      "fs": false,
+      "path": false
+    }
   }
-}
