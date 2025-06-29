@@ -342,46 +342,6 @@ jobs:
           # Try to run the test
           timeout 30s npm test || echo "⚠️ Test completed (timeout is normal in CI)"
 
-      - name: Unpublish existing version if needed
-        if: |
-          (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_npm == 'true') || 
-          (github.event_name == 'schedule') ||
-          (github.ref == 'refs/heads/main' && github.event_name == 'push')
-        run: |
-          cd dist
-          
-          # Check if NPM_TOKEN is available
-          if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
-            echo "⚠️ NPM_TOKEN not available, skipping NPM operations"
-            exit 0
-          fi
-          
-          # Configure NPM authentication
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
-          
-          # Try to unpublish the existing version if it exists
-          PACKAGE_VERSION="${{ needs.check-version.outputs.package_version }}"
-          echo "🔍 Checking if version $PACKAGE_VERSION exists on NPM..."
-          
-          if npm view opencv-wasm-js@$PACKAGE_VERSION version >/dev/null 2>&1; then
-            echo "⚠️ Version $PACKAGE_VERSION exists, attempting to unpublish..."
-            
-            # Unpublish the specific version
-            if npm unpublish opencv-wasm-js@$PACKAGE_VERSION --force; then
-              echo "✅ Successfully unpublished opencv-wasm-js@$PACKAGE_VERSION"
-              # Wait a moment for NPM to process
-              sleep 5
-            else
-              echo "❌ Failed to unpublish opencv-wasm-js@$PACKAGE_VERSION"
-              echo "ℹ️ Note: NPM only allows unpublishing within 72 hours of publication"
-              echo "ℹ️ Will try to use a suffix version instead..."
-            fi
-          else
-            echo "✅ Version $PACKAGE_VERSION does not exist on NPM"
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
       - name: Publish to NPM with unique version
         if: |
           (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_npm == 'true') || 
@@ -397,37 +357,16 @@ jobs:
             exit 0
           fi
           
+          echo "🚀 Publishing to NPM with version ${{ needs.check-version.outputs.package_version }}..."
+          
           # Configure NPM authentication
           echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
           
-          PACKAGE_VERSION="${{ needs.check-version.outputs.package_version }}"
-          
-          # If the original version still exists, try with suffix
-          if npm view opencv-wasm-js@$PACKAGE_VERSION version >/dev/null 2>&1; then
-            echo "⚠️ Version $PACKAGE_VERSION still exists, trying with suffix..."
-            
-            # Find next available suffix version
-            BASE_VERSION="${{ needs.check-version.outputs.opencv_version }}"
-            for suffix in a b c d e f g h i j k l m n o p q r s t u v w x y z; do
-              TEST_VERSION="${BASE_VERSION}.${suffix}"
-              echo "   Testing version: $TEST_VERSION"
-              
-              if ! npm view opencv-wasm-js@$TEST_VERSION version >/dev/null 2>&1; then
-                PACKAGE_VERSION="$TEST_VERSION"
-                echo "✅ Found available version: $PACKAGE_VERSION"
-                
-                # Update package.json with new version
-                sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$PACKAGE_VERSION\"/" package.json
-                break
-              fi
-            done
-          fi
-          
-          echo "🚀 Publishing to NPM with version $PACKAGE_VERSION..."
-          
           # Publish the package
-          if npm publish --access public; then
-            echo "✅ Successfully published opencv-wasm-js@$PACKAGE_VERSION to NPM!"
+          npm publish --access public
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ Successfully published opencv-wasm-js@${{ needs.check-version.outputs.package_version }} to NPM!"
             echo "📦 Package URL: https://www.npmjs.com/package/opencv-wasm-js"
           else
             echo "❌ NPM publish failed"
