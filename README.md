@@ -1,6 +1,6 @@
 # OpenCV WASM JS
 
-OpenCV compiled to WebAssembly for JavaScript applications. Works in both browser and Node.js environments with easy NPM installation.
+OpenCV compiled to WebAssembly for JavaScript applications. **Features separate `opencv.js` and `opencv_js.wasm` files** for maximum flexibility. Works in both browser and Node.js environments with easy NPM installation.
 
 ## 📦 Installation
 
@@ -8,16 +8,27 @@ OpenCV compiled to WebAssembly for JavaScript applications. Works in both browse
 npm install opencv-wasm-js
 ```
 
+## ✨ Key Features
+
+- ✅ **Separate Files**: [opencv.js](http://_vscodecontentref_/17) and `opencv_js.wasm` are **individual files** (not embedded)
+- ✅ **NPM Ready**: Direct installation and automatic loading
+- ✅ **Node.js Support**: Automatic WASM loading in Node.js
+- ✅ **Browser Support**: Script tag loading or module bundler compatible
+- ✅ **TypeScript**: Full TypeScript definitions included
+- ✅ **Flexible Loading**: Multiple ways to load and use the files
+
 ## 🚀 Quick Start
 
-### Node.js (CommonJS)
+### Node.js (Automatic Loading)
+
+The simplest way - let the package handle everything:
 
 ```javascript
 const cv = require('opencv-wasm-js');
 
 async function main() {
   try {
-    // Load OpenCV
+    // Load OpenCV (automatically finds opencv.js and opencv_js.wasm)
     const opencv = await cv();
     
     // Create a test matrix
@@ -38,6 +49,8 @@ main();
 
 ### Node.js (ES6 Modules)
 
+For modern ES6 module syntax:
+
 ```javascript
 import loadOpenCV from 'opencv-wasm-js';
 
@@ -57,7 +70,9 @@ async function main() {
 main();
 ```
 
-### Browser (Script Tag)
+### Browser (Script Tag - Separate Files)
+
+Load the separate files directly in browser:
 
 ```html
 <!DOCTYPE html>
@@ -67,11 +82,12 @@ main();
 </head>
 <body>
     <script>
-        // Load from CDN or local files
+        // Configure OpenCV before loading
         var Module = {
             onRuntimeInitialized() {
                 const cv = Module;
                 console.log('OpenCV loaded!');
+                console.log('Version:', cv.getBuildInformation().split('\n')[0]);
                 
                 // Test OpenCV
                 const mat = new cv.Mat(100, 100, cv.CV_8UC1);
@@ -80,12 +96,15 @@ main();
             }
         };
     </script>
+    <!-- Load OpenCV.js - it will automatically load opencv_js.wasm -->
     <script src="node_modules/opencv-wasm-js/opencv.js"></script>
 </body>
 </html>
 ```
 
 ### Browser (ES6 Modules with Bundler)
+
+For webpack, rollup, vite, etc:
 
 ```javascript
 import loadOpenCV from 'opencv-wasm-js';
@@ -104,6 +123,63 @@ async function initOpenCV() {
 }
 
 initOpenCV();
+```
+
+## 📁 File Structure & Access
+
+When you install the package, you get separate files:
+
+```
+node_modules/opencv-wasm-js/
+├── index.js          # CommonJS loader (automatic)
+├── index.mjs         # ES6 module loader (automatic)
+├── opencv.js         # OpenCV JavaScript runtime (SEPARATE FILE)
+├── opencv_js.wasm    # OpenCV WebAssembly binary (SEPARATE FILE)
+├── opencv.d.ts       # TypeScript definitions
+├── package.json      # NPM package configuration
+└── README.md         # Documentation
+```
+
+### Direct File Access
+
+Access the separate files directly when needed:
+
+```javascript
+// Get file paths
+const opencvJsPath = require.resolve('opencv-wasm-js/opencv.js');
+const opencvWasmPath = require.resolve('opencv-wasm-js/opencv_js.wasm');
+
+console.log('OpenCV JS file:', opencvJsPath);
+console.log('OpenCV WASM file:', opencvWasmPath);
+
+// Use with custom loaders
+import opencvJs from 'opencv-wasm-js/opencv.js';
+// WASM file: opencv-wasm-js/opencv_js.wasm
+```
+
+### Manual Loading (Advanced)
+
+For custom loading scenarios:
+
+```javascript
+const fs = require('fs');
+const path = require('path');
+
+// Load WASM manually
+const wasmPath = require.resolve('opencv-wasm-js/opencv_js.wasm');
+const wasmBinary = fs.readFileSync(wasmPath);
+
+global.Module = {
+    wasmBinary: wasmBinary,
+    onRuntimeInitialized() {
+        const cv = global.Module;
+        console.log('OpenCV ready!');
+        // Use OpenCV here
+    }
+};
+
+// Load OpenCV.js
+require('opencv-wasm-js/opencv.js');
 ```
 
 ## 🧪 Complete Example
@@ -168,9 +244,52 @@ async function typedExample(): Promise<void> {
 }
 ```
 
-## 🛠️ API Reference
+## 🛠️ Webpack Configuration
 
-The API is identical to OpenCV.js. Key classes and methods available after loading.
+For bundlers like Webpack, you might need to configure asset handling:
+
+```javascript
+// webpack.config.js
+module.exports = {
+    module: {
+        rules: [
+            {
+                test: /\.wasm$/,
+                type: 'asset/resource',
+            }
+        ]
+    },
+    resolve: {
+        fallback: {
+            "fs": false,
+            "path": false
+        }
+    }
+};
+```
+
+## 🧪 Testing
+
+Test your installation:
+
+```bash
+# Test Node.js (automatic loading)
+npm test
+
+# Test browser (manual)
+npm run test:browser
+```
+
+## 🔍 Separate Files Benefits
+
+**Why separate files matter:**
+
+✅ **Faster Loading**: Browser can download JS and WASM in parallel  
+✅ **Better Caching**: Files can be cached independently  
+✅ **CDN Friendly**: Each file can be served from different CDNs  
+✅ **Flexible Deployment**: Deploy files to different locations  
+✅ **Bundle Optimization**: Bundlers can handle files separately  
+✅ **Progressive Loading**: Load JS first, WASM when needed  
 
 ## 💾 Memory Management
 
@@ -179,9 +298,62 @@ Always remember to delete OpenCV objects:
 ```javascript
 const mat = new cv.Mat(100, 100, cv.CV_8UC1);
 // ... use mat
-mat.delete(); // Important!
+mat.delete(); // Important: prevent memory leaks!
+```
+
+## 🚀 Usage in Different Environments
+
+### Vite
+
+```javascript
+// vite handles WASM automatically
+import loadOpenCV from 'opencv-wasm-js';
+const cv = await loadOpenCV();
+```
+
+### Next.js
+
+```javascript
+// Use dynamic import to avoid SSR issues
+const loadOpenCV = dynamic(() => import('opencv-wasm-js'), {
+    ssr: false
+});
+```
+
+### React
+
+```javascript
+import { useEffect, useState } from 'react';
+import loadOpenCV from 'opencv-wasm-js';
+
+function OpenCVComponent() {
+    const [cv, setCv] = useState(null);
+    
+    useEffect(() => {
+        loadOpenCV().then(setCv);
+    }, []);
+    
+    if (!cv) return <div>Loading OpenCV...</div>;
+    
+    // Use OpenCV here
+    return <div>OpenCV ready!</div>;
+}
 ```
 
 ## 📄 License
 
-Apache License 2.0 - see [LICENSE](LICENSE) file.
+Apache License 2.0 - see [LICENSE](http://_vscodecontentref_/18) file.
+
+## 🤝 Contributing
+
+Contributions welcome! Please read our contributing guidelines.
+
+## 📞 Support
+
+- GitHub Issues: Report bugs and request features
+- Documentation: See examples and API reference  
+- Community: Join discussions and get help
+
+## 🔗 Repository
+
+This package is maintained at: https://github.com/ttop32/opencv-wasm-js
