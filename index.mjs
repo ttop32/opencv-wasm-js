@@ -12,23 +12,8 @@ async function loadOpenCV() {
       const isNode = typeof window === 'undefined' && typeof global !== 'undefined';
       
       if (isNode) {
-        // Node.js environment
-        const fs = await import('fs');
-        const path = await import('path');
-        const url = await import('url');
-        
-        const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
-        const wasmPath = path.join(__dirname, 'opencv_js.wasm');
-        
-        if (!fs.existsSync(wasmPath)) {
-          reject(new Error('OpenCV WASM file not found.'));
-          return;
-        }
-
-        const wasmBinary = fs.readFileSync(wasmPath);
-        
+        // Node.js environment - single file with embedded WASM
         globalThis.Module = {
-          wasmBinary: wasmBinary,
           onRuntimeInitialized() {
             cv = globalThis.Module;
             resolve(cv);
@@ -38,7 +23,7 @@ async function loadOpenCV() {
           }
         };
 
-        // Dynamic import of OpenCV
+        // Dynamic import of OpenCV single file
         await import('./opencv.js');
       } else {
         // Browser environment
@@ -51,8 +36,12 @@ async function loadOpenCV() {
           resolve(cv);
         };
 
+        Module.onAbort = (error) => {
+          reject(new Error('OpenCV WASM loading aborted: ' + error));
+        };
+
         // For ES6 modules in browser, opencv.js should be imported
-        reject(new Error('In browser with ES6 modules, import opencv.js directly'));
+        reject(new Error('In browser with ES6 modules, import opencv.js directly or use script tag'));
       }
     } catch (error) {
       reject(error);

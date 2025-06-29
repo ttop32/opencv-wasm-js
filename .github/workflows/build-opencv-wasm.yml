@@ -34,42 +34,71 @@ jobs:
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
       opencv_version: ${{ steps.check.outputs.opencv_version }}
+      package_version: ${{ steps.check.outputs.package_version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check for new OpenCV version
+      - name: Check for new OpenCV version and determine package version
         id: check
         run: |
           # Handle workflow_dispatch trigger
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             echo "should_build=true" >> $GITHUB_OUTPUT
             echo "opencv_version=${{ github.event.inputs.opencv_version }}" >> $GITHUB_OUTPUT
-            echo "Manual trigger - will build version ${{ github.event.inputs.opencv_version }}"
-            exit 0
-          fi
-          
-          # Get latest OpenCV release
-          LATEST_VERSION=$(curl -s https://api.github.com/repos/opencv/opencv/releases/latest | jq -r .tag_name)
-          echo "Latest OpenCV version: $LATEST_VERSION"
-          
-          # For manual triggers (push/PR), always build
-          if [ "${{ github.event_name }}" != "schedule" ]; then
-            echo "should_build=true" >> $GITHUB_OUTPUT
-            echo "opencv_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
-            echo "Manual trigger - will build"
-            exit 0
-          fi
-          
-          # For scheduled runs, check if we already have this version
-          if gh release view "opencv-$LATEST_VERSION" --repo ${{ github.repository }} >/dev/null 2>&1; then
-            echo "should_build=false" >> $GITHUB_OUTPUT
-            echo "Release opencv-$LATEST_VERSION already exists - skipping build"
+            BASE_VERSION="${{ github.event.inputs.opencv_version }}"
           else
-            echo "should_build=true" >> $GITHUB_OUTPUT
-            echo "opencv_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
-            echo "New version found - will build opencv-$LATEST_VERSION"
+            # Get latest OpenCV release
+            LATEST_VERSION=$(curl -s https://api.github.com/repos/opencv/opencv/releases/latest | jq -r .tag_name)
+            echo "Latest OpenCV version: $LATEST_VERSION"
+            
+            # For manual triggers (push/PR), always build
+            if [ "${{ github.event_name }}" != "schedule" ]; then
+              echo "should_build=true" >> $GITHUB_OUTPUT
+              echo "opencv_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+              BASE_VERSION="$LATEST_VERSION"
+            else
+              # For scheduled runs, check if we already have this version
+              if gh release view "opencv-$LATEST_VERSION" --repo ${{ github.repository }} >/dev/null 2>&1; then
+                echo "should_build=false" >> $GITHUB_OUTPUT
+                echo "Release opencv-$LATEST_VERSION already exists - skipping build"
+                exit 0
+              else
+                echo "should_build=true" >> $GITHUB_OUTPUT
+                echo "opencv_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+                BASE_VERSION="$LATEST_VERSION"
+              fi
+            fi
           fi
+          
+          # Determine unique package version by checking NPM
+          PACKAGE_VERSION="$BASE_VERSION"
+          
+          echo "🔍 Checking NPM for existing versions..."
+          
+          # Check if base version exists
+          if npm view opencv-wasm-js@$PACKAGE_VERSION version >/dev/null 2>&1; then
+            echo "⚠️ Version $PACKAGE_VERSION already exists on NPM, trying suffixes..."
+            
+            # Try suffixes a, b, c... until we find an available version
+            for suffix in a b c d e f g h i j k l m n o p q r s t u v w x y z; do
+              TEST_VERSION="${BASE_VERSION}.${suffix}"
+              echo "   Testing version: $TEST_VERSION"
+              
+              if ! npm view opencv-wasm-js@$TEST_VERSION version >/dev/null 2>&1; then
+                PACKAGE_VERSION="$TEST_VERSION"
+                echo "✅ Found available version: $PACKAGE_VERSION"
+                break
+              else
+                echo "   ❌ Version $TEST_VERSION already exists"
+              fi
+            done
+          else
+            echo "✅ Version $PACKAGE_VERSION is available on NPM"
+          fi
+          
+          echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+          echo "📦 Final package version will be: $PACKAGE_VERSION"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -121,7 +150,7 @@ jobs:
           echo "Cloning OpenCV version: ${{ needs.check-version.outputs.opencv_version }}"
           git clone --depth 1 --branch ${{ needs.check-version.outputs.opencv_version }} https://github.com/opencv/opencv.git
 
-      - name: Build OpenCV WASM with separated files
+      - name: Build OpenCV WASM as single file
         run: |
           source /tmp/emsdk/emsdk_env.sh
           
@@ -130,10 +159,10 @@ jobs:
           # Create explicit build directory
           mkdir -p build_wasm
           
-          # Build OpenCV WASM ensuring files are separate
+          # Build OpenCV WASM as single file with WASM embedded
+          echo "🔧 Building OpenCV WASM as single file with embedded WASM..."
           python3 ./platforms/js/build_js.py build_wasm \
             --build_wasm \
-            --disable_single_file \
             --cmake_option="-DCMAKE_BUILD_TYPE=Release" \
             --cmake_option="-DBUILD_EXAMPLES=OFF" \
             --cmake_option="-DBUILD_TESTS=OFF" \
@@ -152,34 +181,22 @@ jobs:
             --cmake_option="-DCV_ENABLE_INTRINSICS=OFF" \
             --cmake_option="-DCPU_BASELINE=" \
             --cmake_option="-DCPU_DISPATCH=" \
-            --build_flags="-s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_NAME='cv' -s USE_ES6_IMPORT_META=0 -s SINGLE_FILE=0"
+            --build_flags="-s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_NAME='cv' -s USE_ES6_IMPORT_META=0 -s SINGLE_FILE=1"
 
-      - name: Verify and locate build output with detailed search
+      - name: Verify build output
         run: |
-          echo "=== Comprehensive search for OpenCV build output ==="
-          echo "Current directory: $(pwd)"
-          
-          echo -e "\n=== All JS files in opencv directory ==="
+          echo "=== Searching for OpenCV build output (single file) ==="
           find opencv -name "*.js" -type f -exec ls -lh {} \; 2>/dev/null || echo "No JS files found"
-          
-          echo -e "\n=== All WASM files in opencv directory ==="
-          find opencv -name "*.wasm" -type f -exec ls -lh {} \; 2>/dev/null || echo "No WASM files found"
-          
-          echo -e "\n=== Build directory contents ==="
-          find opencv -type d -name "*build*" -exec echo "Directory: {}" \; -exec ls -lah {} \; 2>/dev/null || echo "No build directories found"
+          find opencv -name "*.wasm" -type f -exec ls -lh {} \; 2>/dev/null || echo "No WASM files found (expected for single file build)"
 
-      - name: Create separate OpenCV JS and WASM files
+      - name: Create single OpenCV JS file
         run: |
           mkdir -p dist
           
-          echo "=== Finding and copying OpenCV files with comprehensive search ==="
+          echo "=== Finding and copying OpenCV single file ==="
           
-          # Initialize variables
+          # Find the OpenCV JS file
           OPENCV_JS=""
-          OPENCV_WASM=""
-          
-          # Search patterns for opencv.js - expanded search
-          echo "🔍 Searching for opencv.js..."
           for js_path in \
             "opencv/build_wasm/bin/opencv.js" \
             "opencv/build_js/bin/opencv.js" \
@@ -194,97 +211,41 @@ jobs:
               OPENCV_JS="$js_path"
               echo "✅ Found opencv.js at: $js_path"
               break
-            else
-              echo "   ❌ Not found: $js_path"
             fi
           done
           
-          # Search patterns for .wasm file - expanded search
-          echo -e "\n🔍 Searching for opencv_js.wasm..."
-          for wasm_path in \
-            "opencv/build_wasm/bin/opencv_js.wasm" \
-            "opencv/build_js/bin/opencv_js.wasm" \
-            "opencv/bin/opencv_js.wasm" \
-            "opencv/build_wasm/opencv_js.wasm" \
-            "opencv/build_js/opencv_js.wasm" \
-            "opencv/opencv_js.wasm" \
-            "opencv/build/bin/opencv_js.wasm" \
-            "opencv/build/opencv_js.wasm"
-          do
-            if [ -f "$wasm_path" ]; then
-              OPENCV_WASM="$wasm_path"
-              echo "✅ Found WASM file at: $wasm_path"
-              break
-            else
-              echo "   ❌ Not found: $wasm_path"
-            fi
-          done
-          
-          # If not found with exact names, search more broadly
+          # Broad search if not found
           if [ -z "$OPENCV_JS" ]; then
-            echo -e "\n🔍 Performing broad search for JS files..."
             OPENCV_JS=$(find opencv -name "opencv*.js" -type f | head -1)
             if [ -n "$OPENCV_JS" ]; then
               echo "✅ Found opencv.js via broad search: $OPENCV_JS"
-            else
-              echo "❌ No opencv*.js files found"
-              # Try to find any JS file that might be OpenCV
-              ANY_JS=$(find opencv -name "*.js" -type f | grep -E "(cv|opencv)" | head -1)
-              if [ -n "$ANY_JS" ]; then
-                echo "⚠️ Found alternative JS file: $ANY_JS"
-                OPENCV_JS="$ANY_JS"
-              fi
             fi
           fi
-          
-          if [ -z "$OPENCV_WASM" ]; then
-            echo -e "\n🔍 Performing broad search for WASM files..."
-            OPENCV_WASM=$(find opencv -name "*.wasm" -type f | head -1)
-            if [ -n "$OPENCV_WASM" ]; then
-              echo "✅ Found WASM file via broad search: $OPENCV_WASM"
-            else
-              echo "❌ No WASM files found"
-            fi
-          fi
-          
-          # Verify and copy files
-          echo -e "\n=== File verification and copying ==="
           
           if [ -n "$OPENCV_JS" ] && [ -f "$OPENCV_JS" ]; then
+            # Copy the single JS file (no modifications needed)
             cp "$OPENCV_JS" dist/opencv.js
+            
             FILE_SIZE=$(wc -c < "$OPENCV_JS")
             FILE_SIZE_MB=$(echo "scale=2; $FILE_SIZE/1024/1024" | bc -l 2>/dev/null || echo "?")
             echo "✅ Copied opencv.js ($FILE_SIZE bytes / ${FILE_SIZE_MB} MB)"
             
-            # Verify the JS file contains OpenCV code
-            if grep -q "opencv\|Mat\|WASM\|Module" "$OPENCV_JS" 2>/dev/null; then
-              echo "✅ JS file appears to contain OpenCV code"
+            # Verify single file (should be large with embedded WASM)
+            if [ "$FILE_SIZE" -gt 5000000 ]; then  # > 5MB indicates embedded WASM
+              echo "✅ File size indicates embedded WASM - single file confirmed!"
             else
-              echo "⚠️ JS file might not contain OpenCV code"
+              echo "⚠️ File might be too small for embedded WASM ($FILE_SIZE bytes)"
+            fi
+            
+            # Check if WASM is embedded
+            if grep -q "wasmBinary\|base64" "$OPENCV_JS" 2>/dev/null; then
+              echo "✅ WASM appears to be embedded in JS file"
+            else
+              echo "⚠️ WASM might not be embedded"
             fi
           else
             echo "❌ Error: opencv.js not found!"
-            echo "Available JS files in opencv directory:"
             find opencv -name "*.js" -type f -exec ls -lah {} \; 2>/dev/null || echo "No JS files found"
-            exit 1
-          fi
-          
-          if [ -n "$OPENCV_WASM" ] && [ -f "$OPENCV_WASM" ]; then
-            cp "$OPENCV_WASM" dist/opencv_js.wasm
-            FILE_SIZE=$(wc -c < "$OPENCV_WASM")
-            FILE_SIZE_MB=$(echo "scale=2; $FILE_SIZE/1024/1024" | bc -l 2>/dev/null || echo "?")
-            echo "✅ Copied opencv_js.wasm ($FILE_SIZE bytes / ${FILE_SIZE_MB} MB)"
-            
-            # Verify WASM file is valid
-            if command -v file >/dev/null && file "$OPENCV_WASM" | grep -q "WebAssembly"; then
-              echo "✅ WASM file is valid WebAssembly binary"
-            else
-              echo "⚠️ File might not be a valid WASM binary (file command not available or file not recognized)"
-            fi
-          else
-            echo "❌ Error: opencv_js.wasm not found!"
-            echo "Available WASM files in opencv directory:"
-            find opencv -name "*.wasm" -type f -exec ls -lah {} \; 2>/dev/null || echo "No WASM files found"
             exit 1
           fi
           
@@ -300,48 +261,37 @@ jobs:
           mkdir -p dist/test
           cp test/test.js dist/test/
           
-          # Update package.json with correct version
-          sed "s/\"version\": \"[^\"]*\"/\"version\": \"${{ needs.check-version.outputs.opencv_version }}\"/" package.json > dist/package.json
+          # Update package.json with the unique version and single file setup
+          sed -e "s/\"version\": \"[^\"]*\"/\"version\": \"${{ needs.check-version.outputs.package_version }}\"/" \
+              -e 's/"opencv_js.wasm"/"opencv.js"/' \
+              -e '/opencv_js\.wasm/d' \
+              -e 's/OpenCV compiled to WebAssembly for JavaScript applications - NPM ready with Node.js and browser support/OpenCV compiled to WebAssembly for JavaScript applications - Single file with embedded WASM/' \
+              package.json > dist/package.json
           
           echo -e "\n=== Final package verification ==="
           echo "📦 Package contents:"
           ls -lah dist/
           
-          echo -e "\n📊 File sizes summary:"
+          echo -e "\n📊 Single file summary:"
           if [ -f "dist/opencv.js" ]; then
             JS_SIZE=$(wc -c < dist/opencv.js)
             JS_SIZE_MB=$(echo "scale=2; $JS_SIZE/1024/1024" | bc -l 2>/dev/null || echo "?")
             echo "✅ opencv.js: $JS_SIZE bytes (${JS_SIZE_MB} MB)"
           fi
           
-          if [ -f "dist/opencv_js.wasm" ]; then
-            WASM_SIZE=$(wc -c < dist/opencv_js.wasm)
-            WASM_SIZE_MB=$(echo "scale=2; $WASM_SIZE/1024/1024" | bc -l 2>/dev/null || echo "?")
-            echo "✅ opencv_js.wasm: $WASM_SIZE bytes (${WASM_SIZE_MB} MB)"
-          fi
-          
-          echo -e "\n✅ Both OpenCV files successfully created as separate files!"
+          echo -e "\n✅ Single OpenCV file with embedded WASM created successfully!"
 
-      - name: Test NPM package with separated files
+      - name: Test NPM package with single file
         run: |
           cd dist
-          echo "🧪 Testing NPM package..."
+          echo "🧪 Testing single file NPM package..."
           
-          # Verify critical files exist and are separate
-          echo "📋 File verification:"
-          
+          # Verify critical files exist
           if [ ! -f "opencv.js" ]; then
             echo "❌ opencv.js missing!"
             exit 1
           else
             echo "✅ opencv.js exists"
-          fi
-          
-          if [ ! -f "opencv_js.wasm" ]; then
-            echo "❌ opencv_js.wasm missing!"
-            exit 1
-          else
-            echo "✅ opencv_js.wasm exists"
           fi
           
           if [ ! -f "index.js" ]; then
@@ -351,38 +301,23 @@ jobs:
             echo "✅ index.js exists"
           fi
           
-          # Verify files are actually separate (not embedded)
-          if ! grep -q "opencv_js.wasm" opencv.js; then
-            echo "✅ WASM is properly separated from JS file"
+          # Verify this is a single file (no separate .wasm)
+          if [ ! -f "opencv_js.wasm" ]; then
+            echo "✅ No separate WASM file - single file mode confirmed"
           else
-            echo "⚠️ WASM might be embedded in JS file"
+            echo "⚠️ Separate WASM file found - might not be single file mode"
           fi
           
-          echo "✅ All critical files present and properly separated"
+          echo "✅ Single file package verification complete"
           
-          # Try to run the test (may fail if OpenCV doesn't load, but that's ok for CI)
-          timeout 30s npm test || echo "⚠️ Test completed (timeout or warning is normal in CI)"
+          # Try to run the test
+          timeout 30s npm test || echo "⚠️ Test completed (timeout is normal in CI)"
 
-      - name: Check NPM package version
-        id: npm-check
-        run: |
-          cd dist
-          PACKAGE_VERSION="${{ needs.check-version.outputs.opencv_version }}"
-          
-          # Check if this version already exists on NPM
-          if npm view opencv-wasm-js@$PACKAGE_VERSION version >/dev/null 2>&1; then
-            echo "version_exists=true" >> $GITHUB_OUTPUT
-            echo "⚠️ Version $PACKAGE_VERSION already exists on NPM"
-          else
-            echo "version_exists=false" >> $GITHUB_OUTPUT
-            echo "✅ Version $PACKAGE_VERSION is new, ready to publish"
-          fi
-
-      - name: Publish to NPM
+      - name: Publish to NPM with unique version
         if: |
           (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_npm == 'true') || 
-          (github.event_name == 'schedule' && steps.npm-check.outputs.version_exists == 'false') ||
-          (github.ref == 'refs/heads/main' && github.event_name == 'push' && steps.npm-check.outputs.version_exists == 'false')
+          (github.event_name == 'schedule') ||
+          (github.ref == 'refs/heads/main' && github.event_name == 'push')
         run: |
           cd dist
           
@@ -390,75 +325,47 @@ jobs:
           if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
             echo "⚠️ NPM_TOKEN not available, skipping NPM publish"
             echo "ℹ️ To enable NPM publishing, add NPM_TOKEN to repository secrets"
-            echo "ℹ️ Get your NPM token from: https://www.npmjs.com/settings/tokens"
             exit 0
           fi
           
-          echo "🚀 Publishing to NPM..."
+          echo "🚀 Publishing to NPM with version ${{ needs.check-version.outputs.package_version }}..."
           
           # Configure NPM authentication
           echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
           
-          # Set NPM user (optional, for better logging)
-          npm whoami || echo "NPM user check failed (this is normal)"
-          
           # Publish the package
           npm publish --access public
           
-          echo "✅ Successfully published opencv-wasm-js@${{ needs.check-version.outputs.opencv_version }} to NPM!"
-          echo "📦 Package URL: https://www.npmjs.com/package/opencv-wasm-js"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Final verification of separated files
-        run: |
-          echo "=== 📋 Final NPM package verification ==="
-          ls -lah dist/
-          
-          echo -e "\n=== 📁 Package structure ==="
-          find dist -type f | sort
-          
-          echo -e "\n=== ⚖️ File sizes ==="
-          if [ -f "dist/opencv.js" ] && [ -f "dist/opencv_js.wasm" ]; then
-            JS_SIZE=$(wc -c < dist/opencv.js)
-            WASM_SIZE=$(wc -c < dist/opencv_js.wasm)
-            echo "✅ opencv.js: $JS_SIZE bytes"
-            echo "✅ opencv_js.wasm: $WASM_SIZE bytes"
-            echo "✅ Total size: $((JS_SIZE + WASM_SIZE)) bytes"
-            echo "✅ Both OpenCV files are present and separate"
-            
-            # Verify they are truly separate files
-            if [ "$JS_SIZE" -gt 0 ] && [ "$WASM_SIZE" -gt 0 ]; then
-              echo "✅ Both files have content - separation successful!"
-            else
-              echo "❌ One or both files are empty!"
-              exit 1
-            fi
+          if [ $? -eq 0 ]; then
+            echo "✅ Successfully published opencv-wasm-js@${{ needs.check-version.outputs.package_version }} to NPM!"
+            echo "📦 Package URL: https://www.npmjs.com/package/opencv-wasm-js"
           else
-            echo "❌ Missing critical OpenCV files!"
+            echo "❌ NPM publish failed"
             exit 1
           fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create archive
         run: |
           cd dist
-          tar -czf ../opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.tar.gz .
-          zip -r ../opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip .
+          tar -czf ../opencv-wasm-js-${{ needs.check-version.outputs.package_version }}.tar.gz .
+          zip -r ../opencv-wasm-js-${{ needs.check-version.outputs.package_version }}.zip .
           
           echo "📦 Created archives:"
-          ls -lah ../opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.*
+          ls -lah ../opencv-wasm-js-${{ needs.check-version.outputs.package_version }}.*
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: opencv-${{ needs.check-version.outputs.opencv_version }}
-          name: OpenCV WASM JS ${{ needs.check-version.outputs.opencv_version }}
+          tag_name: opencv-${{ needs.check-version.outputs.package_version }}
+          name: OpenCV WASM JS ${{ needs.check-version.outputs.package_version }}
           body: |
             OpenCV ${{ needs.check-version.outputs.opencv_version }} compiled to WebAssembly/JavaScript
             
             ## 📦 NPM Installation
             ```bash
-            npm install opencv-wasm-js@${{ needs.check-version.outputs.opencv_version }}
+            npm install opencv-wasm-js@${{ needs.check-version.outputs.package_version }}
             ```
             
             ## 🚀 Quick Start
@@ -476,29 +383,27 @@ jobs:
             
             ## 📁 Files Available
             - **Complete NPM Package:**
-              - [opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.tar.gz](http://_vscodecontentref_/2) - Complete NPM package (tar)
-              - [opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip](http://_vscodecontentref_/3) - Complete NPM package (zip)
+              - [opencv-wasm-js-${{ needs.check-version.outputs.package_version }}.tar.gz](http://_vscodecontentref_/2) - Complete NPM package (tar)
+              - [opencv-wasm-js-${{ needs.check-version.outputs.package_version }}.zip](http://_vscodecontentref_/3) - Complete NPM package (zip)
             
-            - **Individual Separated Files:**
-              - [opencv.js](http://_vscodecontentref_/4) - OpenCV JavaScript runtime (**separate file**)
-              - `opencv_js.wasm` - OpenCV WebAssembly binary (**separate file**)
+            - **Single File:**
+              - [opencv.js](http://_vscodecontentref_/4) - OpenCV JavaScript runtime (**single file with embedded WASM**)
               - [index.js](http://_vscodecontentref_/5) - NPM CommonJS loader
               - [index.mjs](http://_vscodecontentref_/6) - NPM ES6 module loader
               - [opencv.d.ts](http://_vscodecontentref_/7) - TypeScript definitions
               - [package.json](http://_vscodecontentref_/8) - NPM package configuration
             
             ## ✨ Features
-            - ✅ **Separated Files**: [opencv.js](http://_vscodecontentref_/9) and `opencv_js.wasm` are **separate files** for flexible loading
+            - ✅ **Single File**: [opencv.js](http://_vscodecontentref_/9) contains everything - **WASM is embedded** for easy deployment
             - ✅ **NPM Ready**: Direct installation with [npm install opencv-wasm-js](http://_vscodecontentref_/10)
-            - ✅ **Node.js Support**: Automatic WASM loading in Node.js
+            - ✅ **Node.js Support**: Automatic loading in Node.js
             - ✅ **Browser Support**: Script tag loading or module bundler compatible
             - ✅ **TypeScript**: Full TypeScript definitions included
-            - ✅ **ES6 & CommonJS**: Both module systems supported
-            - ✅ **Memory Management**: Helper functions for proper cleanup
+            - ✅ **Easy Deployment**: Only one file to serve - no separate WASM file needed
             
             ## 🔧 Usage Examples
             
-            ### Browser (Separate Files)
+            ### Browser (Single File)
             ```html
             <script>
               var Module = {
@@ -510,7 +415,7 @@ jobs:
                 }
               };
             </script>
-            <!-- opencv.js will automatically load opencv_js.wasm -->
+            <!-- Single file - WASM is embedded -->
             <script src="opencv.js"></script>
             ```
             
@@ -518,22 +423,19 @@ jobs:
             ```javascript
             const cv = require('opencv-wasm-js');
             const opencv = await cv();
-            // opencv.js and opencv_js.wasm are loaded automatically
+            // Single file loaded automatically
             ```
             
-            ### Direct File Access
-            ```javascript
-            // Access files directly
-            const opencvJsPath = require.resolve('opencv-wasm-js/opencv.js');
-            const opencvWasmPath = require.resolve('opencv-wasm-js/opencv_js.wasm');
+            ### CDN Usage (Single File)
+            ```html
+            <script src="https://unpkg.com/opencv-wasm-js@${{ needs.check-version.outputs.package_version }}/opencv.js"></script>
             ```
             
             See the README for complete usage instructions.
           files: |
-            opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.tar.gz
-            opencv-wasm-js-${{ needs.check-version.outputs.opencv_version }}.zip
+            opencv-wasm-js-${{ needs.check-version.outputs.package_version }}.tar.gz
+            opencv-wasm-js-${{ needs.check-version.outputs.package_version }}.zip
             dist/opencv.js
-            dist/opencv_js.wasm
             [index.js](http://_vscodecontentref_/11)
             [index.mjs](http://_vscodecontentref_/12)
             [opencv.d.ts](http://_vscodecontentref_/13)
@@ -545,35 +447,29 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Post-publish summary
+      - name: Build Summary
         if: always()
         run: |
           echo "## 📋 Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "| Item | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| OpenCV Version | \`${{ needs.check-version.outputs.opencv_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Package Version | \`${{ needs.check-version.outputs.package_version }}\` |" >> $GITHUB_STEP_SUMMARY
           
-          if [ -f "dist/opencv.js" ] && [ -f "dist/opencv_js.wasm" ]; then
+          if [ -f "dist/opencv.js" ]; then
             JS_SIZE=$(wc -c < dist/opencv.js)
-            WASM_SIZE=$(wc -c < dist/opencv_js.wasm)
+            JS_SIZE_MB=$(echo "scale=2; $JS_SIZE/1024/1024" | bc -l 2>/dev/null || echo "?")
             echo "| Build Status | ✅ Success |" >> $GITHUB_STEP_SUMMARY
-            echo "| opencv.js | ✅ $JS_SIZE bytes |" >> $GITHUB_STEP_SUMMARY
-            echo "| opencv_js.wasm | ✅ $WASM_SIZE bytes |" >> $GITHUB_STEP_SUMMARY
-            echo "| File Separation | ✅ **Separate Files** |" >> $GITHUB_STEP_SUMMARY
+            echo "| opencv.js | ✅ $JS_SIZE bytes (${JS_SIZE_MB} MB) |" >> $GITHUB_STEP_SUMMARY
+            echo "| File Type | ✅ **Single File with Embedded WASM** |" >> $GITHUB_STEP_SUMMARY
           else
             echo "| Build Status | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          if [ -n "${{ secrets.NPM_TOKEN }}" ]; then
-            echo "| NPM Publish | ✅ Configured |" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "| NPM Publish | ⚠️ NPM_TOKEN not configured |" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## 🚀 Usage" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "npm install opencv-wasm-js@${{ needs.check-version.outputs.opencv_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "npm install opencv-wasm-js@${{ needs.check-version.outputs.package_version }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Files are properly separated:** \[opencv.js\](http://_vscodecontentref_/16) and \`opencv_js.wasm\` are individual files for maximum flexibility." >> $GITHUB_STEP_SUMMARY
+          echo "**Single file deployment:** Only \[opencv.js\](http://_vscodecontentref_/16) needed - WASM is embedded for maximum simplicity." >> $GITHUB_STEP_SUMMARY

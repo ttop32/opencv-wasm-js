@@ -1,6 +1,6 @@
 # OpenCV WASM JS
 
-OpenCV compiled to WebAssembly for JavaScript applications. **Features separate `opencv.js` and `opencv_js.wasm` files** for maximum flexibility. Works in both browser and Node.js environments with easy NPM installation.
+OpenCV compiled to WebAssembly for JavaScript applications. **Features single `opencv.js` file with embedded WASM** for maximum simplicity. Works in both browser and Node.js environments with easy NPM installation.
 
 ## 📦 Installation
 
@@ -10,12 +10,12 @@ npm install opencv-wasm-js
 
 ## ✨ Key Features
 
-- ✅ **Separate Files**: [opencv.js](http://_vscodecontentref_/17) and `opencv_js.wasm` are **individual files** (not embedded)
+- ✅ **Single File**: `opencv.js` contains everything - **WASM is embedded**
 - ✅ **NPM Ready**: Direct installation and automatic loading
-- ✅ **Node.js Support**: Automatic WASM loading in Node.js
+- ✅ **Node.js Support**: Automatic loading in Node.js
 - ✅ **Browser Support**: Script tag loading or module bundler compatible
 - ✅ **TypeScript**: Full TypeScript definitions included
-- ✅ **Flexible Loading**: Multiple ways to load and use the files
+- ✅ **Easy Deployment**: Only one file to serve
 
 ## 🚀 Quick Start
 
@@ -28,7 +28,7 @@ const cv = require('opencv-wasm-js');
 
 async function main() {
   try {
-    // Load OpenCV (automatically finds opencv.js and opencv_js.wasm)
+    // Load OpenCV (single file with embedded WASM)
     const opencv = await cv();
     
     // Create a test matrix
@@ -70,9 +70,9 @@ async function main() {
 main();
 ```
 
-### Browser (Script Tag - Separate Files)
+### Browser (Script Tag - Single File)
 
-Load the separate files directly in browser:
+Load the single file directly in browser:
 
 ```html
 <!DOCTYPE html>
@@ -96,7 +96,7 @@ Load the separate files directly in browser:
             }
         };
     </script>
-    <!-- Load OpenCV.js - it will automatically load opencv_js.wasm -->
+    <!-- Load single OpenCV.js file - WASM is embedded -->
     <script src="node_modules/opencv-wasm-js/opencv.js"></script>
 </body>
 </html>
@@ -127,14 +127,13 @@ initOpenCV();
 
 ## 📁 File Structure & Access
 
-When you install the package, you get separate files:
+When you install the package, you get a single file:
 
 ```
 node_modules/opencv-wasm-js/
 ├── index.js          # CommonJS loader (automatic)
 ├── index.mjs         # ES6 module loader (automatic)
-├── opencv.js         # OpenCV JavaScript runtime (SEPARATE FILE)
-├── opencv_js.wasm    # OpenCV WebAssembly binary (SEPARATE FILE)
+├── opencv.js         # OpenCV JavaScript runtime (SINGLE FILE with embedded WASM)
 ├── opencv.d.ts       # TypeScript definitions
 ├── package.json      # NPM package configuration
 └── README.md         # Documentation
@@ -142,19 +141,16 @@ node_modules/opencv-wasm-js/
 
 ### Direct File Access
 
-Access the separate files directly when needed:
+Access the single file directly when needed:
 
 ```javascript
-// Get file paths
+// Get file path
 const opencvJsPath = require.resolve('opencv-wasm-js/opencv.js');
-const opencvWasmPath = require.resolve('opencv-wasm-js/opencv_js.wasm');
-
 console.log('OpenCV JS file:', opencvJsPath);
-console.log('OpenCV WASM file:', opencvWasmPath);
 
 // Use with custom loaders
 import opencvJs from 'opencv-wasm-js/opencv.js';
-// WASM file: opencv-wasm-js/opencv_js.wasm
+// No separate WASM file needed!
 ```
 
 ### Manual Loading (Advanced)
@@ -162,15 +158,8 @@ import opencvJs from 'opencv-wasm-js/opencv.js';
 For custom loading scenarios:
 
 ```javascript
-const fs = require('fs');
-const path = require('path');
-
-// Load WASM manually
-const wasmPath = require.resolve('opencv-wasm-js/opencv_js.wasm');
-const wasmBinary = fs.readFileSync(wasmPath);
-
+// Single file - no manual WASM loading needed
 global.Module = {
-    wasmBinary: wasmBinary,
     onRuntimeInitialized() {
         const cv = global.Module;
         console.log('OpenCV ready!');
@@ -178,7 +167,7 @@ global.Module = {
     }
 };
 
-// Load OpenCV.js
+// Load single OpenCV.js file
 require('opencv-wasm-js/opencv.js');
 ```
 
@@ -251,14 +240,6 @@ For bundlers like Webpack, you might need to configure asset handling:
 ```javascript
 // webpack.config.js
 module.exports = {
-    module: {
-        rules: [
-            {
-                test: /\.wasm$/,
-                type: 'asset/resource',
-            }
-        ]
-    },
     resolve: {
         fallback: {
             "fs": false,
@@ -280,16 +261,16 @@ npm test
 npm run test:browser
 ```
 
-## 🔍 Separate Files Benefits
+## 🔍 Single File Benefits
 
-**Why separate files matter:**
+**Why single file is better:**
 
-✅ **Faster Loading**: Browser can download JS and WASM in parallel  
-✅ **Better Caching**: Files can be cached independently  
-✅ **CDN Friendly**: Each file can be served from different CDNs  
-✅ **Flexible Deployment**: Deploy files to different locations  
-✅ **Bundle Optimization**: Bundlers can handle files separately  
-✅ **Progressive Loading**: Load JS first, WASM when needed  
+✅ **Simplest Deployment**: Only one file to serve  
+✅ **No File Dependencies**: WASM is embedded, no separate files  
+✅ **CDN Friendly**: Single URL to include  
+✅ **Easy Distribution**: One file to share  
+✅ **No Path Issues**: No need to manage multiple file paths  
+✅ **Instant Loading**: No separate WASM download needed  
 
 ## 💾 Memory Management
 
@@ -306,7 +287,7 @@ mat.delete(); // Important: prevent memory leaks!
 ### Vite
 
 ```javascript
-// vite handles WASM automatically
+// vite handles single file automatically
 import loadOpenCV from 'opencv-wasm-js';
 const cv = await loadOpenCV();
 ```
@@ -340,9 +321,24 @@ function OpenCVComponent() {
 }
 ```
 
+### Vanilla JavaScript (Browser)
+
+```html
+<!-- Simplest way - just include and use -->
+<script>
+    var Module = {
+        onRuntimeInitialized() {
+            console.log('OpenCV ready!');
+            // Use Module directly here
+        }
+    };
+</script>
+<script src="https://unpkg.com/opencv-wasm-js/opencv.js"></script>
+```
+
 ## 📄 License
 
-Apache License 2.0 - see [LICENSE](http://_vscodecontentref_/18) file.
+Apache License 2.0 - see LICENSE file.
 
 ## 🤝 Contributing
 
