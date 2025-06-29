@@ -76,8 +76,20 @@ jobs:
           
           echo "🔍 Checking NPM for existing versions..."
           
-          # Check if base version exists
-          if npm view opencv-wasm-js@$PACKAGE_VERSION version >/dev/null 2>&1; then
+          # Always start with a suffix to avoid conflicts
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            # For manual builds, try to unpublish first, then use suffix
+            echo "🔄 Manual build detected - will handle version conflicts"
+          fi
+          
+          # Check if base version exists and find next available
+          FOUND_VERSION=false
+          
+          # Try base version first
+          if ! npm view opencv-wasm-js@$PACKAGE_VERSION version >/dev/null 2>&1; then
+            echo "✅ Version $PACKAGE_VERSION is available on NPM"
+            FOUND_VERSION=true
+          else
             echo "⚠️ Version $PACKAGE_VERSION already exists on NPM, trying suffixes..."
             
             # Try suffixes a, b, c... until we find an available version
@@ -88,13 +100,35 @@ jobs:
               if ! npm view opencv-wasm-js@$TEST_VERSION version >/dev/null 2>&1; then
                 PACKAGE_VERSION="$TEST_VERSION"
                 echo "✅ Found available version: $PACKAGE_VERSION"
+                FOUND_VERSION=true
                 break
               else
                 echo "   ❌ Version $TEST_VERSION already exists"
               fi
             done
-          else
-            echo "✅ Version $PACKAGE_VERSION is available on NPM"
+          fi
+          
+          if [ "$FOUND_VERSION" = false ]; then
+            echo "❌ No available version found with suffixes a-z"
+            # Try double letter suffixes
+            for suffix1 in a b c d e; do
+              for suffix2 in a b c d e f g h i j; do
+                TEST_VERSION="${BASE_VERSION}.${suffix1}${suffix2}"
+                echo "   Testing version: $TEST_VERSION"
+                
+                if ! npm view opencv-wasm-js@$TEST_VERSION version >/dev/null 2>&1; then
+                  PACKAGE_VERSION="$TEST_VERSION"
+                  echo "✅ Found available version: $PACKAGE_VERSION"
+                  FOUND_VERSION=true
+                  break 2
+                fi
+              done
+            done
+          fi
+          
+          if [ "$FOUND_VERSION" = false ]; then
+            echo "❌ Could not find any available version"
+            exit 1
           fi
           
           echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
